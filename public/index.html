@@ -1,0 +1,264 @@
+<!doctype html>
+<html lang="vi">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>MedCall – Nhắc uống thuốc bằng cuộc gọi</title>
+<style>
+  :root { --bg:#f6f7f9; --card:#fff; --text:#1d2330; --muted:#6b7385; --line:#e3e6ec; --accent:#0f766e; --accent-2:#e6f4f2;
+          --ok:#15803d; --warn:#b45309; --bad:#b91c1c; }
+  @media (prefers-color-scheme: dark) { :root { --bg:#12151b; --card:#1b2029; --text:#e7eaf0; --muted:#98a1b3; --line:#2a313d;
+          --accent:#2dd4bf; --accent-2:#163a37; --ok:#4ade80; --warn:#fbbf24; --bad:#f87171; } }
+  * { box-sizing: border-box; }
+  body { margin:0; font:15px/1.5 system-ui, -apple-system, "Segoe UI", Roboto, sans-serif; background:var(--bg); color:var(--text); }
+  header { padding:20px 16px 8px; max-width:1100px; margin:auto; display:flex; flex-wrap:wrap; gap:8px 16px; align-items:baseline; }
+  header h1 { margin:0; font-size:22px; }
+  .pill { font-size:12px; padding:2px 8px; border-radius:99px; background:var(--accent-2); color:var(--accent); }
+  main { max-width:1100px; margin:auto; padding:8px 16px 40px; display:grid; gap:16px; grid-template-columns: 1fr 1fr; }
+  @media (max-width: 800px) { main { grid-template-columns: 1fr; } }
+  section { background:var(--card); border:1px solid var(--line); border-radius:12px; padding:16px; min-width:0; }
+  section.wide { grid-column: 1 / -1; }
+  h2 { font-size:16px; margin:0 0 12px; }
+  form { display:grid; gap:8px; grid-template-columns: 1fr 1fr; }
+  form .full { grid-column: 1 / -1; }
+  label { font-size:12px; color:var(--muted); display:grid; gap:2px; }
+  input, select, textarea { font:inherit; padding:7px 9px; border:1px solid var(--line); border-radius:8px; background:var(--bg); color:var(--text); width:100%; }
+  button { font:inherit; padding:7px 12px; border-radius:8px; border:1px solid var(--accent); background:var(--accent); color:#fff; cursor:pointer; }
+  @media (prefers-color-scheme: dark) { button { color:#06201d; } }
+  button.ghost { background:transparent; color:var(--accent); }
+  button.danger { background:transparent; border-color:var(--bad); color:var(--bad); }
+  .row { display:flex; gap:8px; align-items:center; flex-wrap:wrap; }
+  .item { border-top:1px solid var(--line); padding:10px 0; }
+  .item:first-child { border-top:0; }
+  .muted { color:var(--muted); font-size:13px; }
+  .tag { font-size:12px; padding:1px 8px; border-radius:99px; border:1px solid currentColor; white-space:nowrap; }
+  .s-taken { color:var(--ok); } .s-skipped, .s-missed { color:var(--bad); } .s-snoozed, .s-retry, .s-calling, .s-due { color:var(--warn); }
+  .days { display:flex; gap:4px; flex-wrap:wrap; }
+  .days label { flex-direction:row; display:flex; gap:3px; align-items:center; color:var(--text); }
+  .days input { width:auto; }
+  table { width:100%; border-collapse:collapse; font-size:14px; }
+  td, th { text-align:left; padding:6px 4px; border-top:1px solid var(--line); vertical-align:top; }
+  .scroll { overflow-x:auto; }
+  details summary { cursor:pointer; color:var(--accent); font-size:13px; }
+  .bubble { margin:4px 0; padding:6px 10px; border-radius:10px; max-width:85%; }
+  .agent { background:var(--accent-2); }
+  .patient { background:var(--bg); border:1px solid var(--line); margin-left:auto; }
+  #phone { position:fixed; inset:auto 16px 16px auto; width:min(380px, calc(100vw - 32px)); background:var(--card); border:2px solid var(--accent);
+           border-radius:16px; padding:14px; box-shadow:0 10px 40px rgba(0,0,0,.25); display:none; }
+  #phone.show { display:block; }
+  #chat { max-height:300px; overflow-y:auto; display:flex; flex-direction:column; margin:8px 0; }
+  .ring { animation: ring 1s infinite; } @keyframes ring { 50% { transform: rotate(-3deg); } }
+</style>
+</head>
+<body>
+<header>
+  <h1>📞 MedCall</h1>
+  <span class="muted">Đến giờ uống thuốc, nhân viên AI gọi điện nhắc thay cho thông báo đẩy.</span>
+  <span class="pill" id="mode">…</span>
+</header>
+
+<main>
+  <section>
+    <h2>Thêm người bệnh</h2>
+    <form id="fPatient">
+      <label>Họ tên<input name="name" required placeholder="Nguyễn Thị Lan"></label>
+      <label>Danh xưng<select name="honorific">
+        <option>bác</option><option>cô</option><option>chú</option><option>ông</option><option>bà</option><option>anh</option><option>chị</option></select></label>
+      <label>SĐT người bệnh<input name="phone" required placeholder="+84912345678"></label>
+      <label>SĐT người thân (nhận SMS khi lỡ thuốc)<input name="caregiverPhone" placeholder="+84..."></label>
+      <label class="full">Ghi chú cho nhân viên (nghe kém, nói chậm…)<input name="notes"></label>
+      <button class="full">Lưu</button>
+    </form>
+  </section>
+
+  <section>
+    <h2>Thêm thuốc & giờ uống</h2>
+    <form id="fMed">
+      <label class="full">Người bệnh<select name="patientId" id="patientSelect" required></select></label>
+      <label>Tên thuốc<input name="name" required placeholder="Metformin"></label>
+      <label>Liều<input name="dosage" placeholder="500mg, 1 viên"></label>
+      <label class="full">Cách dùng<input name="instructions" placeholder="uống sau ăn"></label>
+      <label class="full">Giờ uống (cách nhau dấu phẩy)<input name="times" required placeholder="08:00, 20:00"></label>
+      <div class="full days" id="days"></div>
+      <button class="full">Lưu</button>
+    </form>
+  </section>
+
+  <section class="wide">
+    <h2>Người bệnh & lịch thuốc</h2>
+    <div id="patients"></div>
+  </section>
+
+  <section class="wide">
+    <h2>Lịch sử nhắc thuốc</h2>
+    <div class="scroll"><table><thead><tr><th>Giờ</th><th>Người bệnh</th><th>Thuốc</th><th>Trạng thái</th><th>Số lần gọi</th><th>Ghi chú</th></tr></thead>
+      <tbody id="doses"></tbody></table></div>
+  </section>
+
+  <section class="wide">
+    <h2>Cuộc gọi gần đây</h2>
+    <div id="calls"></div>
+  </section>
+</main>
+
+<div id="phone">
+  <div class="row" style="justify-content:space-between">
+    <strong id="phoneTitle">📲 Cuộc gọi đến</strong>
+    <span class="muted" id="phoneSub"></span>
+  </div>
+  <div id="chat"></div>
+  <div id="ringing" class="row">
+    <button id="btnAnswer" class="ring">Nghe máy</button>
+    <button id="btnDecline" class="danger">Từ chối</button>
+  </div>
+  <div id="talking" style="display:none">
+    <div class="row">
+      <input id="say" placeholder="Bạn trả lời… (vd: lát nữa 20 phút)" style="flex:1">
+      <button id="btnSend">Gửi</button>
+      <button id="btnMic" class="ghost" title="Nói bằng micro">🎤</button>
+    </div>
+    <div class="row" style="margin-top:8px">
+      <button id="btnSilent" class="ghost">(Im lặng)</button>
+      <button id="btnHang" class="danger">Cúp máy</button>
+    </div>
+  </div>
+</div>
+
+<script>
+const $ = (s) => document.querySelector(s);
+const esc = (s) => String(s ?? "").replace(/[&<>"]/g, (c) => ({ "&":"&amp;","<":"&lt;",">":"&gt;",'"':"&quot;" }[c]));
+const DOW = ["CN","T2","T3","T4","T5","T6","T7"];
+const STATUS = { due:"Đến giờ", calling:"Đang gọi", taken:"Đã uống", snoozed:"Hẹn gọi lại", retry:"Chờ gọi lại", skipped:"Bỏ liều", missed:"Lỡ thuốc" };
+let pw = sessionStorageGet("pw") || "";
+let data = { patients:[], medications:[], doses:[], calls:[] };
+let simActive = null, simSeen = new Set();
+
+function sessionStorageGet(k) { try { return sessionStorage.getItem(k); } catch { return null; } }
+function sessionStorageSet(k, v) { try { sessionStorage.setItem(k, v); } catch {} }
+
+async function api(path, opts = {}) {
+  const res = await fetch(path, { ...opts, headers: { "content-type":"application/json", "x-admin-password": pw }, body: opts.body && JSON.stringify(opts.body) });
+  if (res.status === 401) { pw = prompt("Mật khẩu quản trị:") || ""; sessionStorageSet("pw", pw); return api(path, opts); }
+  const json = await res.json().catch(() => ({}));
+  if (!res.ok) { alert(json.error || "Có lỗi"); throw new Error(json.error); }
+  return json;
+}
+
+$("#days").innerHTML = '<span class="muted">Ngày trong tuần (bỏ trống = mỗi ngày):</span>' +
+  DOW.map((d, i) => `<label><input type="checkbox" name="days" value="${i}">${d}</label>`).join("");
+
+$("#fPatient").onsubmit = async (e) => {
+  e.preventDefault();
+  await api("/api/patients", { method:"POST", body: Object.fromEntries(new FormData(e.target)) });
+  e.target.reset(); refresh();
+};
+$("#fMed").onsubmit = async (e) => {
+  e.preventDefault();
+  const f = new FormData(e.target);
+  await api("/api/medications", { method:"POST", body: {
+    patientId: f.get("patientId"), name: f.get("name"), dosage: f.get("dosage"), instructions: f.get("instructions"),
+    times: f.get("times").split(/[,\s]+/).filter(Boolean).map((t) => t.padStart(5, "0")),
+    days: f.getAll("days").map(Number) } });
+  e.target.reset(); refresh();
+};
+
+async function refresh() {
+  const [status, patients, medications, doses, calls] = await Promise.all(
+    ["status","patients","medications","doses","calls"].map((p) => api("/api/" + p)));
+  data = { patients, medications, doses, calls };
+  $("#mode").textContent = `Gọi: ${status.phone === "twilio" ? "Twilio (thật)" : "Giả lập trên web"} · Agent: ${status.agent.mode === "claude" ? status.agent.model : "luật dự phòng"}`;
+  render();
+  checkIncoming();
+}
+
+const pName = (id) => { const p = data.patients.find((x) => x.id === id); return p ? `${p.honorific} ${p.name}` : "?"; };
+const mName = (id) => data.medications.find((m) => m.id === id)?.name || "(đã xoá)";
+
+function render() {
+  const sel = $("#patientSelect"), cur = sel.value;
+  sel.innerHTML = data.patients.map((p) => `<option value="${p.id}">${esc(p.honorific + " " + p.name)}</option>`).join("");
+  if (cur) sel.value = cur;
+
+  $("#patients").innerHTML = data.patients.map((p) => {
+    const meds = data.medications.filter((m) => m.patientId === p.id);
+    return `<div class="item">
+      <div class="row" style="justify-content:space-between">
+        <div><strong>${esc(p.honorific)} ${esc(p.name)}</strong> <span class="muted">${esc(p.phone)}${p.caregiverPhone ? " · người thân " + esc(p.caregiverPhone) : ""}</span></div>
+        <div class="row"><button onclick="callNow('${p.id}')">📞 Gọi thử ngay</button><button class="danger" onclick="delPatient('${p.id}')">Xoá</button></div>
+      </div>
+      ${meds.map((m) => `<div class="row muted" style="margin-top:6px">
+        <span class="tag ${m.active ? "s-taken" : ""}">${m.active ? "Bật" : "Tắt"}</span>
+        <span style="color:var(--text)">${esc(m.name)}</span> ${[m.dosage, m.instructions].filter(Boolean).map(esc).join(" · ")} ·
+        <strong style="color:var(--text)">${m.times.join(", ")}</strong> ${m.days?.length ? "(" + m.days.map((d) => DOW[d]).join(" ") + ")" : "(mỗi ngày)"}
+        <button class="ghost" onclick="toggleMed('${m.id}', ${!m.active})">${m.active ? "Tắt" : "Bật"}</button>
+        <button class="danger" onclick="delMed('${m.id}')">Xoá</button></div>`).join("") || '<div class="muted">Chưa có thuốc.</div>'}
+    </div>`;
+  }).join("") || '<div class="muted">Chưa có người bệnh nào.</div>';
+
+  $("#doses").innerHTML = data.doses.map((d) => `<tr>
+    <td>${esc(d.slot)}</td><td>${esc(pName(d.patientId))}</td><td>${d.medicationIds.map(mName).map(esc).join(", ")}</td>
+    <td><span class="tag s-${d.status}">${STATUS[d.status] || d.status}</span></td><td>${d.attempts}</td><td class="muted">${esc(d.concern)}</td></tr>`).join("")
+    || '<tr><td colspan="6" class="muted">Chưa có.</td></tr>';
+
+  $("#calls").innerHTML = data.calls.slice(0, 30).map((c) => `<div class="item">
+    <div class="row"><strong>${esc(pName(c.patientId))}</strong>
+      <span class="muted">${new Date(c.createdAt).toLocaleString("vi-VN")} · lần ${c.attempt} · ${esc(c.status)}</span>
+      ${c.outcome ? `<span class="tag">${esc(c.outcome)}</span>` : ""}</div>
+    ${c.transcript.length ? `<details><summary>Xem hội thoại (${c.transcript.length})</summary>${bubbles(c.transcript)}</details>` : ""}
+  </div>`).join("") || '<div class="muted">Chưa có cuộc gọi.</div>';
+}
+const bubbles = (t) => t.map((x) => `<div class="bubble ${x.role}">${esc(x.text || "(im lặng)")}</div>`).join("");
+
+window.callNow = async (id) => { await api(`/api/patients/${id}/call-now`, { method:"POST" }); refresh(); };
+window.delPatient = async (id) => { if (confirm("Xoá người bệnh này?")) { await api("/api/patients/" + id, { method:"DELETE" }); refresh(); } };
+window.delMed = async (id) => { await api("/api/medications/" + id, { method:"DELETE" }); refresh(); };
+window.toggleMed = async (id, active) => { await api("/api/medications/" + id, { method:"PATCH", body:{ active } }); refresh(); };
+
+// ---------- Điện thoại giả lập ----------
+function checkIncoming() {
+  if (simActive) return;
+  const c = data.calls.find((c) => c.mode === "simulator" && c.status === "queued" && !simSeen.has(c.id));
+  if (!c) return;
+  simActive = c.id; simSeen.add(c.id);
+  $("#phoneTitle").textContent = "📲 Cuộc gọi đến";
+  $("#phoneSub").textContent = `tới ${pName(c.patientId)}`;
+  $("#chat").innerHTML = ""; $("#ringing").style.display = "flex"; $("#talking").style.display = "none";
+  $("#phone").classList.add("show");
+}
+function addBubble(role, text) { $("#chat").insertAdjacentHTML("beforeend", bubbles([{ role, text }])); $("#chat").scrollTop = 1e9; }
+function speak(text) {
+  try { const u = new SpeechSynthesisUtterance(text); u.lang = "vi-VN"; speechSynthesis.cancel(); speechSynthesis.speak(u); } catch {}
+}
+function closePhone(msg) { $("#phoneTitle").textContent = msg; $("#talking").style.display = "none"; $("#ringing").style.display = "none";
+  simActive = null; setTimeout(() => { if (!simActive) $("#phone").classList.remove("show"); }, 4000); refresh(); }
+
+$("#btnAnswer").onclick = async () => {
+  $("#ringing").style.display = "none"; $("#talking").style.display = "block"; $("#phoneTitle").textContent = "🟢 Đang nghe máy";
+  const r = await api(`/api/sim/${simActive}/answer`, { method:"POST" });
+  addBubble("agent", r.reply); speak(r.reply); $("#say").focus();
+};
+$("#btnDecline").onclick = async () => { await api(`/api/sim/${simActive}/hangup`, { method:"POST" }); closePhone("Đã từ chối – sẽ gọi lại sau"); };
+$("#btnHang").onclick = async () => { await api(`/api/sim/${simActive}/hangup`, { method:"POST" }); closePhone("Đã cúp máy"); };
+async function send(text) {
+  if (!simActive) return;
+  addBubble("patient", text); $("#say").value = "";
+  const r = await api(`/api/sim/${simActive}/say`, { method:"POST", body:{ text } });
+  addBubble("agent", r.reply); speak(r.reply);
+  if (r.end_call) closePhone(`Cuộc gọi kết thúc · ${r.outcome}`);
+}
+$("#btnSend").onclick = () => send($("#say").value.trim());
+$("#say").onkeydown = (e) => { if (e.key === "Enter") send($("#say").value.trim()); };
+$("#btnSilent").onclick = () => send("");
+$("#btnMic").onclick = () => {
+  const SR = window.SpeechRecognition || window.webkitSpeechRecognition;
+  if (!SR) return alert("Trình duyệt không hỗ trợ nhận giọng nói. Hãy dùng Chrome.");
+  const rec = new SR(); rec.lang = "vi-VN";
+  rec.onresult = (e) => send(e.results[0][0].transcript);
+  rec.start();
+};
+
+refresh();
+setInterval(refresh, 3000);
+</script>
+</body>
+</html>
